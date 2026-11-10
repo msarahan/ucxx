@@ -27,6 +27,7 @@ jobs:
       - wheel-tests-ucxx
       - wheel-build-distributed-ucxx
       - wheel-tests-distributed-ucxx
+      - burndown-policy
     permissions:
       actions: read
       contents: read
@@ -39,8 +40,12 @@ jobs:
     with:
       needs: ${{ toJSON(needs) }}
   build-details:
+    needs: [burndown-policy]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
     uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
   check-nightly-ci:
+    needs: [burndown-policy]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -59,6 +64,8 @@ jobs:
           repo: ${{ github.repository }}
           target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
   changed-files:
+    needs: [burndown-policy]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -241,7 +248,8 @@ jobs:
       # duplicate archives that are inaccessible to other PRs.
       pre-commit-cache-read-only: true
   conda-cpp-build:
-    needs: [build-details, checks]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [build-details, checks, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -257,7 +265,8 @@ jobs:
       script: ci/build_cpp.sh
       matrix_type: pull-request
   conda-python-build:
-    needs: [build-details, conda-cpp-build]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [build-details, conda-cpp-build, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -274,6 +283,8 @@ jobs:
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       matrix_type: pull-request
   docs-build-matrix:
+    needs: [burndown-policy]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
     permissions:
       contents: read
     uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
@@ -282,7 +293,12 @@ jobs:
       matrix_name: docs-build
       matrix_type: pull-request
   docs-build:
-    needs: [docs-build-matrix, conda-cpp-build, conda-python-build, changed-files]
+    needs:
+      - docs-build-matrix
+      - conda-cpp-build
+      - conda-python-build
+      - changed-files
+      - burndown-policy
     permissions:
       actions: read
       contents: read
@@ -294,7 +310,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.docs-build-matrix.outputs.matrix) }}
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).build_docs
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).build_docs) }}
     with:
       build_type: pull-request
       node_type: "gpu-${{ matrix.GPU }}-${{ matrix.DRIVER }}-1"
@@ -302,7 +318,7 @@ jobs:
       container_image: "rapidsai/ci-conda:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_docs.sh"
   conda-cpp-tests:
-    needs: [conda-cpp-build, changed-files]
+    needs: [conda-cpp-build, changed-files, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -311,14 +327,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp) }}
     with:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: ci/test_cpp.sh
       matrix_type: pull-request
   conda-python-tests:
-    needs: [conda-cpp-build, conda-python-build, changed-files]
+    needs: [conda-cpp-build, conda-python-build, changed-files, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -327,14 +343,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda) }}
     with:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: ci/test_python.sh
       matrix_type: pull-request
   conda-python-distributed-tests:
-    needs: [conda-cpp-build, conda-python-build, changed-files]
+    needs: [conda-cpp-build, conda-python-build, changed-files, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -343,14 +359,15 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_distributed_conda
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_distributed_conda) }}
     with:
       build_type: pull-request
       script: "ci/test_python_distributed.sh"
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       matrix_type: pull-request
   wheel-build-libucxx:
-    needs: [build-details, checks]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [build-details, checks, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -370,7 +387,8 @@ jobs:
       package-type: cpp
       matrix_type: pull-request
   wheel-build-ucxx:
-    needs: [build-details, wheel-build-libucxx]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [build-details, wheel-build-libucxx, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -390,7 +408,7 @@ jobs:
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       matrix_type: pull-request
   wheel-tests-ucxx:
-    needs: [wheel-build-ucxx, changed-files]
+    needs: [wheel-build-ucxx, changed-files, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -399,14 +417,15 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels) }}
     with:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: ci/test_wheel_ucxx.sh
       matrix_type: pull-request
   wheel-build-distributed-ucxx:
-    needs: [build-details, checks]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [build-details, checks, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -425,7 +444,7 @@ jobs:
       pure-wheel: true
       matrix_type: pull-request
   wheel-tests-distributed-ucxx:
-    needs: [wheel-build-ucxx, wheel-build-distributed-ucxx, changed-files]
+    needs: [wheel-build-ucxx, wheel-build-distributed-ucxx, changed-files, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -434,14 +453,15 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_distributed_wheels
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' && (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_distributed_wheels) }}
     with:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: ci/test_wheel_distributed_ucxx.sh
       matrix_type: pull-request
   devcontainer:
-    needs: ["checks"]
+    if: ${{ needs.burndown-policy.result == 'success' && needs.burndown-policy.outputs.skip-product-ci != 'true' }}
+    needs: [checks, burndown-policy]
     permissions:
       actions: read
       contents: read
@@ -462,3 +482,8 @@ jobs:
         sccache --zero-stats;
         build-all -j0 --verbose;
         sccache --show-adv-stats;
+  burndown-policy:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/burndown-policy.yaml@main # zizmor: ignore[unpinned-uses]
